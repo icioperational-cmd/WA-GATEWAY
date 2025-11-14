@@ -1,6 +1,9 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys'
-import express from "express"
+import makeWASocket, { 
+    DisconnectReason, 
+    useMultiFileAuthState 
+} from '@whiskeysockets/baileys'
 import qrcode from "qrcode-terminal"
+import express from "express"
 import pino from "pino"
 
 const app = express()
@@ -13,14 +16,16 @@ async function startWA() {
     const { state, saveCreds } = await useMultiFileAuthState('./auth')
 
     sock = makeWASocket({
-        printQRInTerminal: true,
         logger: pino({ level: "silent" }),
-        auth: state
+        auth: state,
+        browser: ["Replit","Chrome","1.0"]
     })
 
     sock.ev.on("creds.update", saveCreds)
 
-    sock.ev.on("connection.update", ({ qr, connection, lastDisconnect }) => {
+    sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
+        
+        // ⛳ Menampilkan QR, Baileys versi terbaru wajib lewat sini
         if (qr) {
             console.clear()
             console.log("SCAN QR WHATSAPP:")
@@ -29,26 +34,30 @@ async function startWA() {
 
         if (connection === "open") {
             isConnected = true
-            console.log("WA Connected!")
+            console.log("✅ WhatsApp connected!")
         }
 
+        // ⚠ Reconnect kalau bukan LOGOUT
         if (connection === "close") {
             const reason = lastDisconnect?.error?.output?.statusCode
             console.log("Connection closed:", reason)
 
             if (reason !== DisconnectReason.loggedOut) {
-                console.log("Reconnecting...")
+                console.log("🔄 Reconnecting...")
                 startWA()
+            } else {
+                console.log("❌ Logged out. Hapus folder auth untuk login ulang.")
             }
         }
     })
 
+    // 🔔 Tangkap pesan masuk
     sock.ev.on("messages.upsert", ({ messages }) => {
         const msg = messages[0]
         if (!msg.message) return
 
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text
         const sender = msg.key.remoteJid
+        const text = msg.message.conversation || msg.message.extendedTextMessage?.text
 
         console.log(`[WA] Pesan dari ${sender}: ${text}`)
     })
@@ -56,7 +65,9 @@ async function startWA() {
 
 startWA()
 
+// =========================
 // API SEND MESSAGE
+// =========================
 app.post("/send", async (req, res) => {
     const { number, message } = req.body
 
@@ -69,7 +80,7 @@ app.post("/send", async (req, res) => {
 })
 
 app.get("/", (req, res) => {
-    res.send("WA Gateway Running")
+    res.send("WA Gateway Aktif")
 })
 
 app.listen(3000, () => console.log("🚀 Server berjalan di http://localhost:3000"))

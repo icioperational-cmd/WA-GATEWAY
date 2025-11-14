@@ -1,84 +1,68 @@
-import makeWASocket, {
-  DisconnectReason,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion
-} from '@whiskeysockets/baileys'
-import qrcode from 'qrcode-terminal'
-import express from 'express'
-import pino from 'pino'
-import axios from 'axios'
+import express from "express";
+import makeWASocket, { useMultiFileAuthState, DisconnectReason } from "@whiskeysockets/baileys";
+import qrcode from "qrcode-terminal";
+import bodyParser from "body-parser";
 
-const app = express()
-app.use(express.json())
+const app = express();
+app.use(bodyParser.json());
 
-let sock
-let isConnected = false
+let sock;
 
-// 🔄 AUTO-PING (supaya Replit tidak sleep)
-setInterval(() => {
-  axios.get("https://YOUR-REPL-URL.repl.co").catch(() => {})
-}, 240000)
-
-async function startWA() {
-  const { state, saveCreds } = await useMultiFileAuthState('./auth')
-  const { version } = await fetchLatestBaileysVersion()
+// ======================
+//  START WHATSAPP
+// ======================
+async function startWhatsapp() {
+  const { state, saveCreds } = await useMultiFileAuthState("auth");
 
   sock = makeWASocket({
-    logger: pino({ level: 'silent' }),
-    auth: state,
-    version,
-    syncFullHistory: false,
-    browser: ["Chrome (Replit)", "Safari", "1.0"]
-  })
+    printQRInTerminal: true,
+    auth: state
+  });
 
-  sock.ev.on('creds.update', saveCreds)
+  sock.ev.on("connection.update", (update) => {
+    const { connection, lastDisconnect, qr } = update;
 
-  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
-      console.clear()
-      console.log("📱 Scan QR berikut untuk login WhatsApp:\n")
-      qrcode.generate(qr, { small: true })
+      console.clear();
+      console.log("Scan QR berikut:");
+      qrcode.generate(qr, { small: true });
     }
 
-    if (connection === 'open') {
-      isConnected = true
-      console.log('✅ WhatsApp connected!')
+    if (connection === "close") {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log("Connection closed, reconnecting...", shouldReconnect);
+      if (shouldReconnect) startWhatsapp();
     }
 
-    if (connection === 'close') {
-      const reason = lastDisconnect?.error?.output?.statusCode
-      console.log('❌ Connection closed:', reason)
-
-      if (reason !== DisconnectReason.loggedOut) {
-        console.log('🔄 Reconnecting...')
-        startWA()
-      } else {
-        console.log('❌ Logged out! Hapus folder auth untuk login ulang.')
-      }
+    if (connection === "open") {
+      console.log("WhatsApp Connected!");
     }
-  })
+  });
 
-  sock.ev.on("error", (err) => {
-    console.log("⚠️ Error:", err)
-    console.log("🔄 Restarting WhatsApp...")
-    startWA()
-  })
+  sock.ev.on("creds.update", saveCreds);
 }
 
-startWA()
+startWhatsapp();
 
-app.post('/send', async (req, res) => {
-  const { number, message } = req.body
-  if (!isConnected) return res.json({ status: false, error: 'Device belum terhubung' })
+// ======================
+//   API SEND MESSAGE
+// ======================
+app.get("/send", async (req, res) => {
+  const number = req.query.number;
+  const text = req.query.text;
 
-  const jid = number.replace(/\D/g, '') + '@s.whatsapp.net'
-  await sock.sendMessage(jid, { text: message })
+  if (!number || !text) {
+    return res.json({ status: false, message: "number & text wajib diisi" });
+  }
 
-  res.json({ status: true, sent: { number, message } })
-})
+  try {
+    await sock.sendMessage(number + "@s.whatsapp.net", { text });
+    res.json({ status: true, message: "WA terkirim!" });
+  } catch (err) {
+    res.json({ status: false, error: err.message });
+  }
+});
 
-app.get("/", (req, res) => {
-  res.send("ICI WhatsApp Gateway is running ✓")
-})
-
-app.listen(3000, () => console.log('🚀 Server berjalan di http://localhost:3000'))
+// ======================
+const PORT = 3000;
+app.listen(PORT, () => console.log("Server running on port", PORT));

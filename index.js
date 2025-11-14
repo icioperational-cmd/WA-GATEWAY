@@ -1,4 +1,4 @@
-\import makeWASocket, {
+import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion
@@ -15,10 +15,9 @@ let sock
 let isConnected = false
 
 // 🔄 AUTO-PING (supaya Replit tidak sleep)
-// Replit akan ping server sendiri setiap 4 menit
 setInterval(() => {
   axios.get("https://YOUR-REPL-URL.repl.co").catch(() => {})
-}, 240000) // 4 menit = 240000ms
+}, 240000)
 
 async function startWA() {
   const { state, saveCreds } = await useMultiFileAuthState('./auth')
@@ -50,7 +49,6 @@ async function startWA() {
       const reason = lastDisconnect?.error?.output?.statusCode
       console.log('❌ Connection closed:', reason)
 
-      // 🔁 AUTO RESTART
       if (reason !== DisconnectReason.loggedOut) {
         console.log('🔄 Reconnecting...')
         startWA()
@@ -60,7 +58,6 @@ async function startWA() {
     }
   })
 
-  // 🛡 Auto Restart jika terjadi error fatal
   sock.ev.on("error", (err) => {
     console.log("⚠️ Error:", err)
     console.log("🔄 Restarting WhatsApp...")
@@ -70,9 +67,6 @@ async function startWA() {
 
 startWA()
 
-// ============================
-// 📩 API UNTUK MENGIRIM WA
-// ============================
 app.post('/send', async (req, res) => {
   const { number, message } = req.body
   if (!isConnected) return res.json({ status: false, error: 'Device belum terhubung' })
@@ -83,9 +77,6 @@ app.post('/send', async (req, res) => {
   res.json({ status: true, sent: { number, message } })
 })
 
-// ============================
-// 🌐 WEB SERVER UNTUK PING
-// ============================
 app.get("/", (req, res) => {
   res.send("ICI WhatsApp Gateway is running ✓")
 })

@@ -1,56 +1,75 @@
-// index.js
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
-const express = require('express');
-const bodyParser = require('body-parser');
-const app = express();
-const port = 3000;
+import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys'
+import express from "express"
+import qrcode from "qrcode-terminal"
+import pino from "pino"
 
-// Konfigurasi WhatsApp client
-const client = new Client({
-  authStrategy: new LocalAuth(),
-  puppeteer: { headless: true }
-});
+const app = express()
+app.use(express.json())
 
-// Tampilkan QR di terminal
-client.on('qr', qr => {
-  console.log('\n🔹 Scan QR di bawah ini pakai WhatsApp kamu:\n');
-  qrcode.generate(qr, { small: true });
-});
+let sock
+let isConnected = false
 
-// Jika berhasil login
-client.on('ready', () => {
-  console.log('\n✅ WhatsApp Gateway aktif dan siap digunakan!');
-});
+async function startWA() {
+    const { state, saveCreds } = await useMultiFileAuthState('./auth')
 
-client.initialize();
+    sock = makeWASocket({
+        printQRInTerminal: true,
+        logger: pino({ level: "silent" }),
+        auth: state
+    })
 
-// Middleware Express
-app.use(bodyParser.json());
+    sock.ev.on("creds.update", saveCreds)
 
-// Endpoint tes kirim pesan
-app.post('/send', async (req, res) => {
-  const { number, message } = req.body;
+    sock.ev.on("connection.update", ({ qr, connection, lastDisconnect }) => {
+        if (qr) {
+            console.clear()
+            console.log("SCAN QR WHATSAPP:")
+            qrcode.generate(qr, { small: true })
+        }
 
-  if (!number || !message) {
-    return res.status(400).json({ status: false, message: 'Nomor dan pesan wajib diisi!' });
-  }
+        if (connection === "open") {
+            isConnected = true
+            console.log("WA Connected!")
+        }
 
-  const formattedNumber = number.replace(/\D/g, '');
-  const chatId = formattedNumber.startsWith('62')
-    ? formattedNumber + '@c.us'
-    : '62' + formattedNumber.slice(1) + '@c.us';
+        if (connection === "close") {
+            const reason = lastDisconnect?.error?.output?.statusCode
+            console.log("Connection closed:", reason)
 
-  try {
-    await client.sendMessage(chatId, message);
-    console.log(`✅ Pesan terkirim ke ${formattedNumber}: ${message}`);
-    res.json({ status: true, message: 'Pesan berhasil dikirim!' });
-  } catch (err) {
-    console.error('❌ Gagal kirim pesan:', err);
-    res.status(500).json({ status: false, message: 'Gagal mengirim pesan' });
-  }
-});
+            if (reason !== DisconnectReason.loggedOut) {
+                console.log("Reconnecting...")
+                startWA()
+            }
+        }
+    })
 
-app.listen(port, () => {
-  console.log(`\n🚀 Server berjalan di http://localhost:${port}`);
-});
+    sock.ev.on("messages.upsert", ({ messages }) => {
+        const msg = messages[0]
+        if (!msg.message) return
+
+        const text = msg.message.conversation || msg.message.extendedTextMessage?.text
+        const sender = msg.key.remoteJid
+
+        console.log(`[WA] Pesan dari ${sender}: ${text}`)
+    })
+}
+
+startWA()
+
+// API SEND MESSAGE
+app.post("/send", async (req, res) => {
+    const { number, message } = req.body
+
+    if (!isConnected) return res.json({ status: false, error: "Device belum terhubung" })
+
+    const jid = number + "@s.whatsapp.net"
+    await sock.sendMessage(jid, { text: message })
+
+    res.json({ status: true, message: "Terkirim!" })
+})
+
+app.get("/", (req, res) => {
+    res.send("WA Gateway Running")
+})
+
+app.listen(3000, () => console.log("🚀 Server berjalan di http://localhost:3000"))
